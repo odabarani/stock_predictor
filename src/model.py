@@ -12,7 +12,7 @@ def train_model(df, features):
 
     tscv  = TimeSeriesSplit(n_splits=3)
     model = XGBClassifier(
-        n_estimators=200,
+        n_estimators=100,
         max_depth=4,
         learning_rate=0.05,
         random_state=42,

@@ -1,5 +1,6 @@
 import streamlit as st
 import plotly.graph_objects as go
+import pandas as pd
 import numpy as np
 from src.data_loader import get_stock_data
 from src.features import add_features
@@ -133,13 +134,17 @@ with col2:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-if run and ticker:
-    with st.spinner(f"Pulling data for {ticker}..."):
-        df = get_stock_data(ticker)
-        df = add_features(df)
+# --- Cached pipeline ---
+@st.cache_resource(show_spinner=False)
+def run_pipeline(ticker):
+    df    = get_stock_data(ticker)
+    df    = add_features(df)
+    model, cv_accuracy = train_model(df, FEATURES)
+    return df, model, cv_accuracy
 
-    with st.spinner("Training model..."):
-        model, cv_accuracy = train_model(df, FEATURES)
+if run and ticker:
+    with st.spinner(f"Pulling data and training model for {ticker}..."):
+        df, model, cv_accuracy = run_pipeline(ticker)
 
     latest     = df[FEATURES].iloc[-1].values.reshape(1, -1)
     prediction = int(model.predict(latest)[0])
@@ -188,133 +193,51 @@ if run and ticker:
     st.markdown(f'<div class="signal-banner signal-{sig_class}">⚡ SIGNAL: {signal}</div>', unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- Price Chart + Future Projection ---
+    # --- Price Chart + Projection ---
     st.markdown('<div class="section-label">Price History & 30-Day Forecast</div>', unsafe_allow_html=True)
-    st.markdown('<div class="chart-caption">Blue line = actual closing price &nbsp;|&nbsp; Orange = 5-day average &nbsp;|&nbsp; Green = 20-day average &nbsp;|&nbsp; Shaded zone = projected price range</div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-caption">Blue = closing price &nbsp;|&nbsp; Orange = 5-day MA &nbsp;|&nbsp; Green = 20-day MA &nbsp;|&nbsp; Shaded = projected range</div>', unsafe_allow_html=True)
 
-    # Show only last 180 days of history for clarity
-    df_recent = df.tail(180)
-    last_price = float(df_recent['Close'].iloc[-1].item())
-
-    # Build future projection
+    df_recent    = df.tail(180)
+    last_price   = float(df_recent['Close'].iloc[-1].item())
     daily_vol    = float(df_recent['Close'].pct_change().std().item())
     trend        = 1 if prediction == 1 else -1
     days_ahead   = 30
-    import pandas as pd
     last_date    = df_recent.index[-1]
     future_dates = pd.bdate_range(start=last_date, periods=days_ahead + 1)[1:]
 
-    # Simulate projected path and confidence band
-    projected    = [last_price]
-    upper_band   = [last_price]
-    lower_band   = [last_price]
+    projected  = [last_price]
+    upper_band = [last_price]
+    lower_band = [last_price]
 
     for i in range(1, days_ahead + 1):
-        drift        = trend * daily_vol * 0.5
-        next_price   = projected[-1] * (1 + drift)
-        band_width   = last_price * daily_vol * np.sqrt(i) * 1.5
-        projected.append(round(next_price, 2))
-        upper_band.append(round(next_price + band_width, 2))
-        lower_band.append(round(next_price - band_width, 2))
+        drift      = trend * daily_vol * 0.5
+        next_p     = projected[-1] * (1 + drift)
+        band_width = last_price * daily_vol * np.sqrt(i) * 1.5
+        projected.append(round(next_p, 2))
+        upper_band.append(round(next_p + band_width, 2))
+        lower_band.append(round(next_p - band_width, 2))
 
     fig = go.Figure()
-
-    # Historical price
-    fig.add_trace(go.Scatter(
-        x=df_recent.index,
-        y=df_recent['Close'].squeeze().round(2),
-        name='Close Price',
-        line=dict(color='#2979ff', width=2)
-    ))
-
-    # Moving averages
-    fig.add_trace(go.Scatter(
-        x=df_recent.index,
-        y=df_recent['MA_5'].squeeze().round(2),
-        name='5-Day MA',
-        line=dict(color='#ffab00', width=1.2, dash='dot')
-    ))
-    fig.add_trace(go.Scatter(
-        x=df_recent.index,
-        y=df_recent['MA_20'].squeeze().round(2),
-        name='20-Day MA',
-        line=dict(color='#00e676', width=1.2, dash='dash')
-    ))
-
-    # Confidence band (fill between upper and lower)
-    fig.add_trace(go.Scatter(
-        x=list(future_dates),
-        y=upper_band[1:],
-        name='Upper Range',
-        line=dict(color='rgba(255,255,255,0)', width=0),
-        showlegend=False
-    ))
-    fig.add_trace(go.Scatter(
-        x=list(future_dates),
-        y=lower_band[1:],
-        name='Projected Range',
-        fill='tonexty',
-        fillcolor='rgba(255,171,0,0.12)',
-        line=dict(color='rgba(255,255,255,0)', width=0)
-    ))
-
-    # Projected center line
-    fig.add_trace(go.Scatter(
-        x=[df_recent.index[-1]] + list(future_dates),
-        y=projected,
-        name='Projected Path',
-        line=dict(color='#ffab00', width=1.5, dash='dot')
-    ))
-
-    fig.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='#12121a',
-        plot_bgcolor='#12121a',
-        hovermode='x unified',
-        height=320,
-        margin=dict(l=10, r=10, t=10, b=10),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02),
-        font=dict(family='IBM Plex Mono'),
-        xaxis_title="Date",
-        yaxis_title="Price (USD)",
-        yaxis_tickformat="$,.2f"
-    )
+    fig.add_trace(go.Scatter(x=df_recent.index, y=df_recent['Close'].squeeze().round(2), name='Close Price', line=dict(color='#2979ff', width=2)))
+    fig.add_trace(go.Scatter(x=df_recent.index, y=df_recent['MA_5'].squeeze().round(2), name='5-Day MA', line=dict(color='#ffab00', width=1.2, dash='dot')))
+    fig.add_trace(go.Scatter(x=df_recent.index, y=df_recent['MA_20'].squeeze().round(2), name='20-Day MA', line=dict(color='#00e676', width=1.2, dash='dash')))
+    fig.add_trace(go.Scatter(x=list(future_dates), y=upper_band[1:], line=dict(color='rgba(0,0,0,0)', width=0), showlegend=False))
+    fig.add_trace(go.Scatter(x=list(future_dates), y=lower_band[1:], name='Projected Range', fill='tonexty', fillcolor='rgba(255,171,0,0.12)', line=dict(color='rgba(0,0,0,0)', width=0)))
+    fig.add_trace(go.Scatter(x=[df_recent.index[-1]] + list(future_dates), y=projected, name='Projected Path', line=dict(color='#ffab00', width=1.5, dash='dot')))
+    fig.update_layout(template='plotly_dark', paper_bgcolor='#12121a', plot_bgcolor='#12121a', hovermode='x unified', height=320, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation='h', yanchor='bottom', y=1.02), font=dict(family='IBM Plex Mono'), xaxis_title="Date", yaxis_title="Price (USD)", yaxis_tickformat="$,.2f")
     st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # --- RSI ---
     st.markdown('<div class="section-label">RSI — Market Momentum</div>', unsafe_allow_html=True)
-    st.markdown('<div class="chart-caption">Above 70 = stock may be overheated (pullback likely) &nbsp;|&nbsp; Below 30 = stock may be oversold (bounce likely)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-caption">Above 70 = overheated (pullback likely) &nbsp;|&nbsp; Below 30 = oversold (bounce likely)</div>', unsafe_allow_html=True)
 
     rsi_fig = go.Figure()
-    rsi_fig.add_trace(go.Scatter(
-        x=df_recent.index,
-        y=df_recent['RSI'].squeeze().round(1),
-        name='RSI',
-        line=dict(color='#e040fb', width=1.5),
-        fill='tozeroy',
-        fillcolor='rgba(224,64,251,0.05)'
-    ))
-    rsi_fig.add_hline(y=70, line_dash="dash", line_color="#ff1744",
-                      line_width=1, annotation_text="Overbought",
-                      annotation_position="top right",
-                      annotation_font_color="#ff1744")
-    rsi_fig.add_hline(y=30, line_dash="dash", line_color="#00e676",
-                      line_width=1, annotation_text="Oversold",
-                      annotation_position="bottom right",
-                      annotation_font_color="#00e676")
-    rsi_fig.update_layout(
-        template='plotly_dark',
-        paper_bgcolor='#12121a',
-        plot_bgcolor='#12121a',
-        height=200,
-        margin=dict(l=10, r=10, t=10, b=10),
-        font=dict(family='IBM Plex Mono'),
-        xaxis_title="Date",
-        yaxis_title="RSI",
-        yaxis=dict(range=[0, 100], tickvals=[0, 30, 50, 70, 100])
-    )
+    rsi_fig.add_trace(go.Scatter(x=df_recent.index, y=df_recent['RSI'].squeeze().round(1), name='RSI', line=dict(color='#e040fb', width=1.5), fill='tozeroy', fillcolor='rgba(224,64,251,0.05)'))
+    rsi_fig.add_hline(y=70, line_dash="dash", line_color="#ff1744", line_width=1, annotation_text="Overbought", annotation_position="top right", annotation_font_color="#ff1744")
+    rsi_fig.add_hline(y=30, line_dash="dash", line_color="#00e676", line_width=1, annotation_text="Oversold", annotation_position="bottom right", annotation_font_color="#00e676")
+    rsi_fig.update_layout(template='plotly_dark', paper_bgcolor='#12121a', plot_bgcolor='#12121a', height=200, margin=dict(l=10, r=10, t=10, b=10), font=dict(family='IBM Plex Mono'), xaxis_title="Date", yaxis_title="RSI", yaxis=dict(range=[0, 100], tickvals=[0, 30, 50, 70, 100]))
     st.plotly_chart(rsi_fig, use_container_width=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -322,4 +245,30 @@ if run and ticker:
     # --- Backtest ---
     st.markdown("---")
     st.subheader("Backtest — How Would This Strategy Have Performed?")
-    st.caption("Simulates trading $10,000 using model signals. Trained on 70% of data, tested on the remaining 30% to prevent data leakage.")
+    st.caption("Simulates trading $10,000 using model signals. Trained on 70% of data, tested on remaining 30% to prevent data leakage.")
+
+    portfolio    = backtest(df, model, FEATURES)
+    final_value  = round(portfolio[-1], 2)
+    total_return = round(((final_value - 10000) / 10000) * 100, 1)
+    peak         = round(max(portfolio), 2)
+    ret_class    = "up" if total_return > 0 else "down"
+
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        st.markdown(f"""<div class="metric-card"><div class="metric-label">Final Portfolio Value</div><div class="metric-value">${final_value:,.0f}</div><div class="metric-sub">Starting from $10,000</div></div>""", unsafe_allow_html=True)
+    with b2:
+        st.markdown(f"""<div class="metric-card"><div class="metric-label">Total Return</div><div class="metric-value {ret_class}">{total_return}%</div><div class="metric-sub">Over full test period</div></div>""", unsafe_allow_html=True)
+    with b3:
+        st.markdown(f"""<div class="metric-card"><div class="metric-label">Peak Value</div><div class="metric-value">${peak:,.0f}</div><div class="metric-sub">Highest point reached</div></div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    bt_dates = df.index[50:50 + len(portfolio)]
+    bt_fig   = go.Figure()
+    bt_fig.add_trace(go.Scatter(x=bt_dates, y=[round(v, 2) for v in portfolio], mode='lines', name='Portfolio Value', line=dict(color='#00e676', width=2), fill='tozeroy', fillcolor='rgba(0,230,118,0.05)'))
+    bt_fig.add_hline(y=10000, line_dash="dash", line_color="#666", line_width=1, annotation_text="Starting Capital ($10,000)", annotation_font_color="#666")
+    bt_fig.update_layout(template='plotly_dark', paper_bgcolor='#12121a', plot_bgcolor='#12121a', height=250, margin=dict(l=10, r=10, t=10, b=10), font=dict(family='IBM Plex Mono'), xaxis_title="Date", yaxis_title="Portfolio Value (USD)", yaxis_tickformat="$,.0f", hovermode='x unified')
+    st.plotly_chart(bt_fig, use_container_width=True)
+
+elif run and not ticker:
+    st.warning("Enter a ticker symbol first.")
