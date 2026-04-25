@@ -1,110 +1,325 @@
 import streamlit as st
 import plotly.graph_objects as go
+import numpy as np
 from src.data_loader import get_stock_data
 from src.features import add_features
 from src.model import train_model
 from src.signals import generate_signal
 from src.backtest import backtest
 
-
-
 FEATURES = [
-    'MA_5',
-    'MA_20',
-    'Momentum',
-    'Volatility',
-    'Volume_Change',
-    'RSI',
-    'MACD',
-    'MACD_Signal',
-    'BB_Position'
+    'MA_5', 'MA_20', 'Momentum', 'Volatility',
+    'Volume_Change', 'Volume_Ratio',
+    'RSI', 'MACD', 'MACD_Signal', 'BB_Position',
+    'VIX', 'RS_SPY',
+    'Body_Size', 'Upper_Wick', 'Lower_Wick', 'Gap',
+    'PE_Ratio', 'Profit_Margin', 'Revenue_Growth', 'Debt_Equity'
 ]
 
-# --- Page Config ---
-st.set_page_config(page_title="Stock ML Predictor", page_icon="📈", layout="wide")
+st.set_page_config(
+    page_title="Stock ML Predictor",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
+    html, body, [class*="css"] {
+        font-family: 'IBM Plex Sans', sans-serif;
+        background-color: #0a0a0f;
+        color: #e0e0e0;
+    }
+    .main { background-color: #0a0a0f; padding: 2rem 3rem; }
+    h1 { font-family: 'IBM Plex Mono', monospace !important; font-size: 2rem !important; color: #ffffff !important; }
+
+    .metric-card {
+        background: #12121a;
+        border: 1px solid #1e1e2e;
+        border-radius: 8px;
+        padding: 1.2rem;
+        text-align: center;
+    }
+    .metric-label {
+        font-size: 0.7rem;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        margin-bottom: 0.4rem;
+        font-family: 'IBM Plex Mono', monospace;
+    }
+    .metric-value {
+        font-size: 1.5rem;
+        font-weight: 600;
+        font-family: 'IBM Plex Mono', monospace;
+        color: #ffffff;
+    }
+    .metric-sub {
+        font-size: 0.7rem;
+        color: #555;
+        font-family: 'IBM Plex Mono', monospace;
+        margin-top: 0.3rem;
+    }
+    .metric-value.up   { color: #00e676; }
+    .metric-value.down { color: #ff1744; }
+
+    .signal-banner {
+        padding: 0.8rem 2rem;
+        border-radius: 8px;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 1rem;
+        font-weight: 600;
+        letter-spacing: 2px;
+        text-align: center;
+        margin: 0.5rem 0;
+    }
+    .signal-buy  { background:#003300; border:1px solid #00e676; color:#00e676; }
+    .signal-sell { background:#1a0000; border:1px solid #ff1744; color:#ff1744; }
+    .signal-hold { background:#1a1200; border:1px solid #ffab00; color:#ffab00; }
+
+    .section-label {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.7rem;
+        color: #444;
+        text-transform: uppercase;
+        letter-spacing: 3px;
+        margin-bottom: 0.75rem;
+        border-bottom: 1px solid #1e1e2e;
+        padding-bottom: 0.4rem;
+    }
+    .chart-caption {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.7rem;
+        color: #555;
+        margin-top: -0.5rem;
+        margin-bottom: 1rem;
+    }
+
+    div[data-testid="stTextInput"] input {
+        background: #12121a !important;
+        border: 1px solid #1e1e2e !important;
+        color: #ffffff !important;
+        font-family: 'IBM Plex Mono', monospace !important;
+        font-size: 1rem !important;
+        border-radius: 6px !important;
+        padding: 0.75rem !important;
+    }
+    div[data-testid="stButton"] button {
+        background: #ffffff !important;
+        color: #000000 !important;
+        font-family: 'IBM Plex Mono', monospace !important;
+        font-weight: 600 !important;
+        border: none !important;
+        border-radius: 6px !important;
+        width: 100% !important;
+    }
+    div[data-testid="stButton"] button:hover { background: #00e676 !important; }
+    footer { visibility: hidden; }
+    #MainMenu { visibility: hidden; }
+</style>
+""", unsafe_allow_html=True)
 
 # --- Header ---
-st.title("📈 Stock ML Predictor")
-st.caption("ML-powered 5-day price direction prediction using technical indicators.")
-st.divider()
+st.markdown("# 📈 Stock ML Predictor")
+st.markdown('<p style="color:#444; font-family:IBM Plex Mono; font-size:0.75rem; letter-spacing:2px;">5-DAY DIRECTION PREDICTION · TECHNICAL + FUNDAMENTAL SIGNALS</p>', unsafe_allow_html=True)
+st.markdown("<br>", unsafe_allow_html=True)
 
-# --- Input ---
-col1, col2 = st.columns([3, 1])
+col1, col2 = st.columns([4, 1])
 with col1:
-    ticker = st.text_input("Enter Stock Ticker", "AAPL").upper()
+    ticker = st.text_input("", placeholder="Enter ticker — AAPL, TSLA, NVDA...", label_visibility="collapsed").upper()
 with col2:
-    st.write("")
-    st.write("")
-    run = st.button("Run Prediction", use_container_width=True)
+    run = st.button("RUN →")
 
-# --- Main Logic ---
-if run:
-    with st.spinner(f"Fetching data for {ticker}..."):
+st.markdown("<br>", unsafe_allow_html=True)
+
+if run and ticker:
+    with st.spinner(f"Pulling data for {ticker}..."):
         df = get_stock_data(ticker)
         df = add_features(df)
 
     with st.spinner("Training model..."):
         model, cv_accuracy = train_model(df, FEATURES)
 
-    portfolio = backtest(df, model, FEATURES)
-
     latest     = df[FEATURES].iloc[-1].values.reshape(1, -1)
-    prediction = model.predict(latest)[0]
-    confidence = max(model.predict_proba(latest)[0])
+    prediction = int(model.predict(latest)[0])
+    proba      = model.predict_proba(latest)[0]
+    confidence = round(float(max(proba)) * 100, 1)
     direction  = "📈 UP" if prediction == 1 else "📉 DOWN"
-    signal     = generate_signal(prediction, confidence)
+    signal     = generate_signal(prediction, max(proba))
+    last_close = round(float(df['Close'].iloc[-1].item()), 2)
+    sig_class  = signal.lower()
+    dir_class  = "up" if prediction == 1 else "down"
 
-    st.divider()
+    # --- Metrics ---
+    st.markdown('<div class="section-label">Prediction Output</div>', unsafe_allow_html=True)
+    m1, m2, m3, m4 = st.columns(4)
 
-    # --- Metrics Row ---
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Prediction (5-Day)", direction)
-    m2.metric("Confidence", f"{round(confidence * 100, 2)}%")
-    m3.metric("CV Accuracy", f"{round(cv_accuracy * 100, 2)}%")
+    with m1:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">5-Day Direction</div>
+            <div class="metric-value {dir_class}">{direction}</div>
+            <div class="metric-sub">Expected move over next 5 trading days</div>
+        </div>""", unsafe_allow_html=True)
+    with m2:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">Confidence</div>
+            <div class="metric-value">{confidence}%</div>
+            <div class="metric-sub">Above 65% triggers a signal</div>
+        </div>""", unsafe_allow_html=True)
+    with m3:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">Model Accuracy</div>
+            <div class="metric-value">{round(cv_accuracy * 100, 1)}%</div>
+            <div class="metric-sub">Tested on unseen historical data</div>
+        </div>""", unsafe_allow_html=True)
+    with m4:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">Last Close</div>
+            <div class="metric-value">${last_close:,.2f}</div>
+            <div class="metric-sub">Most recent closing price</div>
+        </div>""", unsafe_allow_html=True)
 
-    # --- Signal Badge ---
-    st.divider()
-    signal_color = {"BUY": "green", "SELL": "red", "HOLD": "orange"}.get(signal, "gray")
-    st.markdown(f"### Signal: :{signal_color}[{signal}]")
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(f'<div class="signal-banner signal-{sig_class}">⚡ SIGNAL: {signal}</div>', unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- Chart ---
-    st.divider()
-    st.subheader(f"{ticker} — Price & Moving Averages")
+    # --- Price Chart + Future Projection ---
+    st.markdown('<div class="section-label">Price History & 30-Day Forecast</div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-caption">Blue line = actual closing price &nbsp;|&nbsp; Orange = 5-day average &nbsp;|&nbsp; Green = 20-day average &nbsp;|&nbsp; Shaded zone = projected price range</div>', unsafe_allow_html=True)
+
+    # Show only last 180 days of history for clarity
+    df_recent = df.tail(180)
+    last_price = float(df_recent['Close'].iloc[-1].item())
+
+    # Build future projection
+    daily_vol    = float(df_recent['Close'].pct_change().std().item())
+    trend        = 1 if prediction == 1 else -1
+    days_ahead   = 30
+    import pandas as pd
+    last_date    = df_recent.index[-1]
+    future_dates = pd.bdate_range(start=last_date, periods=days_ahead + 1)[1:]
+
+    # Simulate projected path and confidence band
+    projected    = [last_price]
+    upper_band   = [last_price]
+    lower_band   = [last_price]
+
+    for i in range(1, days_ahead + 1):
+        drift        = trend * daily_vol * 0.5
+        next_price   = projected[-1] * (1 + drift)
+        band_width   = last_price * daily_vol * np.sqrt(i) * 1.5
+        projected.append(round(next_price, 2))
+        upper_band.append(round(next_price + band_width, 2))
+        lower_band.append(round(next_price - band_width, 2))
 
     fig = go.Figure()
+
+    # Historical price
     fig.add_trace(go.Scatter(
-        x=df.index, y=df['Close'].squeeze(),
-        name='Close Price', line=dict(color='#2196F3', width=2)
+        x=df_recent.index,
+        y=df_recent['Close'].squeeze().round(2),
+        name='Close Price',
+        line=dict(color='#2979ff', width=2)
+    ))
+
+    # Moving averages
+    fig.add_trace(go.Scatter(
+        x=df_recent.index,
+        y=df_recent['MA_5'].squeeze().round(2),
+        name='5-Day MA',
+        line=dict(color='#ffab00', width=1.2, dash='dot')
     ))
     fig.add_trace(go.Scatter(
-        x=df.index, y=df['MA_5'].squeeze(),
-        name='5-Day MA', line=dict(color='#FF9800', width=1.5, dash='dot')
+        x=df_recent.index,
+        y=df_recent['MA_20'].squeeze().round(2),
+        name='20-Day MA',
+        line=dict(color='#00e676', width=1.2, dash='dash')
+    ))
+
+    # Confidence band (fill between upper and lower)
+    fig.add_trace(go.Scatter(
+        x=list(future_dates),
+        y=upper_band[1:],
+        name='Upper Range',
+        line=dict(color='rgba(255,255,255,0)', width=0),
+        showlegend=False
     ))
     fig.add_trace(go.Scatter(
-        x=df.index, y=df['MA_20'].squeeze(),
-        name='20-Day MA', line=dict(color='#4CAF50', width=1.5, dash='dash')
+        x=list(future_dates),
+        y=lower_band[1:],
+        name='Projected Range',
+        fill='tonexty',
+        fillcolor='rgba(255,171,0,0.12)',
+        line=dict(color='rgba(255,255,255,0)', width=0)
     ))
+
+    # Projected center line
+    fig.add_trace(go.Scatter(
+        x=[df_recent.index[-1]] + list(future_dates),
+        y=projected,
+        name='Projected Path',
+        line=dict(color='#ffab00', width=1.5, dash='dot')
+    ))
+
     fig.update_layout(
         template='plotly_dark',
+        paper_bgcolor='#12121a',
+        plot_bgcolor='#12121a',
         hovermode='x unified',
-        height=450,
-        margin=dict(l=0, r=0, t=30, b=0),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02)
+        height=320,
+        margin=dict(l=10, r=10, t=10, b=10),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02),
+        font=dict(family='IBM Plex Mono'),
+        xaxis_title="Date",
+        yaxis_title="Price (USD)",
+        yaxis_tickformat="$,.2f"
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- Backtest performance ---
-    st.divider()
-    st.subheader("Backtest Performance")
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    st.line_chart(portfolio)
+    # --- RSI ---
+    st.markdown('<div class="section-label">RSI — Market Momentum</div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-caption">Above 70 = stock may be overheated (pullback likely) &nbsp;|&nbsp; Below 30 = stock may be oversold (bounce likely)</div>', unsafe_allow_html=True)
 
-    if len(portfolio) > 0:
-        total_return = (portfolio[-1] / portfolio[0] - 1) * 100
-        st.metric("Strategy Return", f"{round(total_return, 2)}%")
+    rsi_fig = go.Figure()
+    rsi_fig.add_trace(go.Scatter(
+        x=df_recent.index,
+        y=df_recent['RSI'].squeeze().round(1),
+        name='RSI',
+        line=dict(color='#e040fb', width=1.5),
+        fill='tozeroy',
+        fillcolor='rgba(224,64,251,0.05)'
+    ))
+    rsi_fig.add_hline(y=70, line_dash="dash", line_color="#ff1744",
+                      line_width=1, annotation_text="Overbought",
+                      annotation_position="top right",
+                      annotation_font_color="#ff1744")
+    rsi_fig.add_hline(y=30, line_dash="dash", line_color="#00e676",
+                      line_width=1, annotation_text="Oversold",
+                      annotation_position="bottom right",
+                      annotation_font_color="#00e676")
+    rsi_fig.update_layout(
+        template='plotly_dark',
+        paper_bgcolor='#12121a',
+        plot_bgcolor='#12121a',
+        height=200,
+        margin=dict(l=10, r=10, t=10, b=10),
+        font=dict(family='IBM Plex Mono'),
+        xaxis_title="Date",
+        yaxis_title="RSI",
+        yaxis=dict(range=[0, 100], tickvals=[0, 30, 50, 70, 100])
+    )
+    st.plotly_chart(rsi_fig, use_container_width=True)
 
-    # --- Feature Importance ---
-    st.divider()
-    st.subheader("Feature Importance")
-    importance_df = dict(zip(FEATURES, model.feature_importances_))
-    st.bar_chart(importance_df)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # --- Backtest ---
+    st.markdown("---")
+    st.subheader("Backtest — How Would This Strategy Have Performed?")
+    st.caption("Simulates trading $10,000 using model signals. Trained on 70% of data, tested on the remaining 30% to prevent data leakage.")
