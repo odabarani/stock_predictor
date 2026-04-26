@@ -246,21 +246,29 @@ if run and ticker:
     st.markdown("---")
     st.subheader("Backtest — How Would This Strategy Have Performed?")
     st.caption("Simulates trading $10,000 using model signals. Trained on 70% of data, tested on remaining 30% to prevent data leakage.")
+    
+    from src.backtest import calculate_metrics
 
     portfolio    = backtest(df, model, FEATURES)
     final_value  = round(portfolio[-1], 2)
     total_return = round(((final_value - 10000) / 10000) * 100, 1)
     peak         = round(max(portfolio), 2)
     ret_class    = "up" if total_return > 0 else "down"
+    sharpe, max_dd = calculate_metrics(portfolio)
+    sharpe_class   = "up" if sharpe > 1 else "down" if sharpe < 0 else ""
+    dd_class       = "down" if max_dd < -20 else ""
 
-    b1, b2, b3 = st.columns(3)
+    b1, b2, b3, b4, b5 = st.columns(5)
     with b1:
-        st.markdown(f"""<div class="metric-card"><div class="metric-label">Final Portfolio Value</div><div class="metric-value">${final_value:,.0f}</div><div class="metric-sub">Starting from $10,000</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="metric-card"><div class="metric-label">Final Value</div><div class="metric-value">${final_value:,.0f}</div><div class="metric-sub">Starting from $10,000</div></div>""", unsafe_allow_html=True)
     with b2:
         st.markdown(f"""<div class="metric-card"><div class="metric-label">Total Return</div><div class="metric-value {ret_class}">{total_return}%</div><div class="metric-sub">Over full test period</div></div>""", unsafe_allow_html=True)
     with b3:
         st.markdown(f"""<div class="metric-card"><div class="metric-label">Peak Value</div><div class="metric-value">${peak:,.0f}</div><div class="metric-sub">Highest point reached</div></div>""", unsafe_allow_html=True)
-
+    with b4:
+        st.markdown(f"""<div class="metric-card"><div class="metric-label">Sharpe Ratio</div><div class="metric-value {sharpe_class}">{sharpe}</div><div class="metric-sub">Above 1.0 is good</div></div>""", unsafe_allow_html=True)
+    with b5:
+        st.markdown(f"""<div class="metric-card"><div class="metric-label">Max Drawdown</div><div class="metric-value {dd_class}">{max_dd}%</div><div class="metric-sub">Worst peak-to-trough drop</div></div>""", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
     bt_dates = df.index[50:50 + len(portfolio)]
