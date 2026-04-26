@@ -1,5 +1,5 @@
 from xgboost import XGBClassifier
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score
+from sklearn.metrics import accuracy_score
 
 
 def train_model(df, features):
@@ -9,8 +9,9 @@ def train_model(df, features):
     split   = int(len(X) * 0.70)
     X_train = X.iloc[:split]
     y_train = y.iloc[:split]
+    X_test  = X.iloc[split:]
+    y_test  = y.iloc[split:]
 
-    tscv  = TimeSeriesSplit(n_splits=3)
     model = XGBClassifier(
         n_estimators=100,
         max_depth=4,
@@ -19,7 +20,8 @@ def train_model(df, features):
         eval_metric='logloss'
     )
 
-    scores = cross_val_score(model, X_train, y_train, cv=tscv, scoring='accuracy')
     model.fit(X_train, y_train)
+    preds    = model.predict(X_test)
+    accuracy = accuracy_score(y_test, preds)
 
-    return model, scores.mean()
+    return model, accuracy
